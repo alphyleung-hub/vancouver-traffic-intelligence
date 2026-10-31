@@ -161,4 +161,50 @@ export default function TrafficMap() {
       </div>
     </div>
   );
+// 3. Render live bus markers with interactive popups
+  useEffect(() => {
+    if (!map.current || !showBuses) return;
+
+    const markers: maplibregl.Marker[] = [];
+
+    buses.forEach((bus) => {
+      const lat = bus.Latitude;
+      const lon = bus.Longitude;
+      if (!lat || !lon) return;
+
+      // Create custom marker element
+      const el = document.createElement('div');
+      el.className = 'bg-teal-600 hover:bg-teal-400 p-1.5 rounded-full text-white text-xs font-bold shadow-lg cursor-pointer border-2 border-white flex items-center justify-center transition-transform hover:scale-110';
+      el.innerHTML = '🚌';
+
+      // Create popup content
+      const popup = new maplibregl.Popup({ offset: 25 }).setHTML(`
+        <div style="color: #0f172a; font-family: sans-serif; padding: 4px;">
+          <div style="font-weight: bold; font-size: 14px; margin-bottom: 2px; color: #0d9488;">
+            Route ${bus.Route}
+          </div>
+          <div style="font-size: 12px; margin-bottom: 2px;">
+            <b>Destination:</b> ${bus.Destination}
+          </div>
+          <div style="font-size: 11px; color: #64748b;">
+            Vehicle No: ${bus.VehicleNo}
+          </div>
+        </div>
+      `);
+
+      // Initialize marker and add to map
+      const marker = new maplibregl.Marker({ element: el })
+        .setLngLat([lon, lat])
+        .setPopup(popup)
+        .addTo(map.current!);
+
+      markers.push(marker);
+    });
+
+    // Cleanup markers when component unmounts or buses update
+    return () => {
+      markers.forEach((m) => m.remove());
+    };
+  }, [buses, showBuses]);
+
 }
