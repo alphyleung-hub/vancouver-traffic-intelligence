@@ -5,6 +5,7 @@ import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { Bus, Train } from 'lucide-react';
 import TransitAlerts from './TransitAlerts';
+import DriveBCCameras from './DriveBCCameras';
 
 // Coordinates defining track paths for animated SkyTrains
 const EXPO_LINE = [
@@ -33,7 +34,7 @@ export default function TrafficMap() {
   const busMarkersRef = useRef<{ [key: string]: maplibregl.Marker }>({});
   const trainMarkersRef = useRef<maplibregl.Marker[]>([]);
 
-  // 1. Initialize Map with Embedded OpenStreetMap Raster Tiles & SkyTrain GeoJSON Source
+  // 1. Initialize Map with OpenStreetMap Raster Tiles & SkyTrain GeoJSON Source
   useEffect(() => {
     if (map.current || !mapContainer.current) return;
 
@@ -247,7 +248,7 @@ export default function TrafficMap() {
       <div ref={mapContainer} className="absolute inset-0 w-full h-full" />
 
       {/* Control Overlay Sidebar */}
-      <div className="absolute top-4 left-4 z-10 bg-slate-900/90 backdrop-blur border border-slate-800 p-4 rounded-xl shadow-xl text-white w-80">
+      <div className="absolute top-4 left-4 z-10 bg-slate-900/90 backdrop-blur border border-slate-800 p-4 rounded-xl shadow-xl text-white w-80 max-h-[92vh] overflow-y-auto">
         <h1 className="text-lg font-bold bg-gradient-to-r from-teal-400 to-blue-500 bg-clip-text text-transparent">
           Vancouver Traffic Intel
         </h1>
@@ -281,6 +282,9 @@ export default function TrafficMap() {
 
         {/* Live Service Alerts Panel */}
         <TransitAlerts />
+
+        {/* DriveBC Bridge Cameras Widget */}
+        <DriveBCCameras />
       </div>
     </div>
   );
