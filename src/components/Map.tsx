@@ -13,13 +13,32 @@ export default function TrafficMap() {
   const [showBuses, setShowBuses] = useState(true);
   const [showSkyTrain, setShowSkyTrain] = useState(true);
 
-  // 1. Initialize Map
+  // 1. Initialize Map with direct OpenStreetMap raster tiles (bulletproof)
   useEffect(() => {
     if (map.current || !mapContainer.current) return;
 
     map.current = new maplibregl.Map({
       container: mapContainer.current,
-      style: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+      style: {
+        version: 8,
+        sources: {
+          'osm-tiles': {
+            type: 'raster',
+            tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+            tileSize: 256,
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          }
+        },
+        layers: [
+          {
+            id: 'osm-tiles-layer',
+            type: 'raster',
+            source: 'osm-tiles',
+            minzoom: 0,
+            maxzoom: 19
+          }
+        ]
+      },
       center: [-123.1207, 49.2827], // Vancouver Center
       zoom: 11
     });
@@ -75,8 +94,8 @@ export default function TrafficMap() {
         },
         paint: {
           'line-color': '#06b6d4',
-          'line-width': 4,
-          'line-opacity': 0.8
+          'line-width': 5,
+          'line-opacity': 0.85
         }
       });
     });
