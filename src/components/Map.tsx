@@ -4,8 +4,9 @@ import { useEffect, useRef, useState } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { Bus, Train } from 'lucide-react';
+import TransitAlerts from './TransitAlerts';
 
-// Coordinates defining line paths for animated SkyTrains
+// Coordinates defining track paths for animated SkyTrains
 const EXPO_LINE = [
   [-123.1162, 49.2827], // Waterfront
   [-123.1040, 49.2770], // Stadium-Chinatown
@@ -32,7 +33,7 @@ export default function TrafficMap() {
   const busMarkersRef = useRef<{ [key: string]: maplibregl.Marker }>({});
   const trainMarkersRef = useRef<maplibregl.Marker[]>([]);
 
-  // 1. Initialize Map
+  // 1. Initialize Map with Embedded OpenStreetMap Raster Tiles & SkyTrain GeoJSON Source
   useEffect(() => {
     if (map.current || !mapContainer.current) return;
 
@@ -79,18 +80,28 @@ export default function TrafficMap() {
             type: 'line',
             source: 'skytrain-lines',
             layout: { 'line-join': 'round', 'line-cap': 'round' },
-            paint: { 'line-color': '#0284c7', 'line-width': 6, 'line-opacity': 0.9 }
+            paint: { 'line-color': '#0284c7', 'line-width': 7, 'line-opacity': 0.95 }
           }
         ]
       },
-      center: [-123.1207, 49.2827],
-      zoom: 12
+      center: [-123.1207, 49.2827], // Vancouver Center
+      zoom: 11
     });
 
     map.current.addControl(new maplibregl.NavigationControl(), 'top-right');
   }, []);
 
-  // 2. Fetch live bus positions periodically
+  // 2. Toggle SkyTrain Layer Visibility Instantly
+  useEffect(() => {
+    if (!map.current || !map.current.getLayer('skytrain-layer')) return;
+    map.current.setLayoutProperty(
+      'skytrain-layer',
+      'visibility',
+      showSkyTrain ? 'visible' : 'none'
+    );
+  }, [showSkyTrain]);
+
+  // 3. Fetch Live Bus Positions Periodically
   useEffect(() => {
     if (!showBuses) return;
 
@@ -102,7 +113,7 @@ export default function TrafficMap() {
           setBuses(data);
         }
       } catch (err) {
-        console.error('Error fetching bus data:', err);
+        console.error('Error fetching live bus data:', err);
       }
     }
 
@@ -111,7 +122,7 @@ export default function TrafficMap() {
     return () => clearInterval(interval);
   }, [showBuses]);
 
-  // 3. Update & Move Live Bus Markers
+  // 4. Update & Smoothly Interpolate Live Bus Markers
   useEffect(() => {
     if (!map.current) return;
 
@@ -129,30 +140,37 @@ export default function TrafficMap() {
       if (!lat || !lon) return;
 
       if (busMarkersRef.current[id]) {
-        // Move existing marker smoothly
+        // Smoothly glide existing marker to new lat/lon coordinate via CSS transition
         busMarkersRef.current[id].setLngLat([lon, lat]);
       } else {
-        // Create new marker
+        // Create new marker DOM element
         const el = document.createElement('div');
         el.style.backgroundColor = '#0d9488';
         el.style.color = 'white';
-        el.style.width = '32px';
-        el.style.height = '32px';
+        el.style.width = '34px';
+        el.style.height = '34px';
         el.style.borderRadius = '50%';
         el.style.display = 'flex';
         el.style.alignItems = 'center';
         el.style.justifyContent = 'center';
-        el.style.fontSize = '14px';
+        el.style.fontSize = '16px';
         el.style.border = '2px solid white';
-        el.style.boxShadow = '0 4px 6px rgba(0,0,0,0.3)';
-        el.style.transition = 'all 1s ease-in-out';
+        el.style.boxShadow = '0 4px 10px rgba(0,0,0,0.4)';
+        el.style.transition = 'all 1s ease-in-out'; // Enables fluid animation
+        el.style.cursor = 'pointer';
         el.innerHTML = '🚌';
 
         const popup = new maplibregl.Popup({ offset: 25 }).setHTML(`
-          <div style="font-family: sans-serif; color: #0f172a; padding: 4px;">
-            <b>Route ${bus.Route}</b><br/>
-            <span>Dest: ${bus.Destination}</span><br/>
-            <small style="color: #64748b;">Vehicle #${bus.VehicleNo}</small>
+          <div style="color: #0f172a; font-family: sans-serif; padding: 6px;">
+            <div style="font-weight: bold; font-size: 14px; color: #0d9488;">
+              Route ${bus.Route}
+            </div>
+            <div style="font-size: 12px; margin-top: 2px;">
+              <b>Destination:</b> ${bus.Destination}
+            </div>
+            <div style="font-size: 11px; color: #64748b; margin-top: 2px;">
+              Vehicle No: ${bus.VehicleNo}
+            </div>
           </div>
         `);
 
@@ -166,17 +184,15 @@ export default function TrafficMap() {
     });
   }, [buses, showBuses]);
 
-  // 4. Animate Moving SkyTrain Trains along Line Coordinates
+  // 5. Animate Moving SkyTrain Markers along Track Geometries
   useEffect(() => {
     if (!map.current) return;
 
-    // Clean up existing train markers
     trainMarkersRef.current.forEach((m) => m.remove());
     trainMarkersRef.current = [];
 
     if (!showSkyTrain) return;
 
-    // Create Train Icon Element
     const createTrainElement = () => {
       const el = document.createElement('div');
       el.style.backgroundColor = '#0284c7';
@@ -189,7 +205,7 @@ export default function TrafficMap() {
       el.style.justifyContent = 'center';
       el.style.fontSize = '12px';
       el.style.border = '2px solid white';
-      el.style.boxShadow = '0 2px 5px rgba(0,0,0,0.4)';
+      el.style.boxShadow = '0 2px 6px rgba(0,0,0,0.4)';
       el.innerHTML = '🚆';
       return el;
     };
@@ -204,7 +220,6 @@ export default function TrafficMap() {
 
     trainMarkersRef.current = [expoTrain, canadaTrain];
 
-    // Interpolation state
     let step = 0;
     const maxSteps = 300;
 
@@ -212,7 +227,6 @@ export default function TrafficMap() {
       step = (step + 1) % maxSteps;
       const progress = step / maxSteps;
 
-      // Calculate position along lines
       const expoIndex = Math.floor(progress * (EXPO_LINE.length - 1));
       const canadaIndex = Math.floor(progress * (CANADA_LINE.length - 1));
 
@@ -232,12 +246,12 @@ export default function TrafficMap() {
     <div className="relative w-screen h-screen bg-slate-900">
       <div ref={mapContainer} className="absolute inset-0 w-full h-full" />
 
-      {/* Sidebar Control Overlay */}
-      <div className="absolute top-4 left-4 z-10 bg-slate-900/90 backdrop-blur border border-slate-800 p-4 rounded-xl shadow-xl text-white w-72">
+      {/* Control Overlay Sidebar */}
+      <div className="absolute top-4 left-4 z-10 bg-slate-900/90 backdrop-blur border border-slate-800 p-4 rounded-xl shadow-xl text-white w-80">
         <h1 className="text-lg font-bold bg-gradient-to-r from-teal-400 to-blue-500 bg-clip-text text-transparent">
           Vancouver Traffic Intel
         </h1>
-        <p className="text-xs text-slate-400 mb-4">Live Transit Movements</p>
+        <p className="text-xs text-slate-400 mb-4">TransLink & DriveBC Live Feed</p>
 
         <div className="space-y-2">
           <button
@@ -264,6 +278,9 @@ export default function TrafficMap() {
             <span className="text-xs">{showBuses ? 'ON' : 'OFF'}</span>
           </button>
         </div>
+
+        {/* Live Service Alerts Panel */}
+        <TransitAlerts />
       </div>
     </div>
   );
