@@ -44,7 +44,6 @@ export default function DriveBCCameras() {
         </span>
       </div>
 
-      {/* Camera Selector Dropdown */}
       <select
         value={selectedCam.id}
         onChange={(e) => {
@@ -61,7 +60,6 @@ export default function DriveBCCameras() {
         ))}
       </select>
 
-      {/* Direct Interactive Feed Card */}
       <div className="relative rounded-lg overflow-hidden border border-slate-700 bg-slate-950 p-4 text-center">
         <Camera size={28} className="mx-auto mb-2 text-teal-400 opacity-80" />
         <p className="text-slate-200 font-medium mb-1">{selectedCam.name}</p>

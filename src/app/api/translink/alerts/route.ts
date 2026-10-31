@@ -8,11 +8,12 @@ export async function GET() {
   }
 
   try {
+    // Request JSON format explicitly from TransLink GTFS-RT endpoint
     const response = await fetch(`https://gtfsapi.translink.ca/v3/gtfsalerts?apikey=${apiKey}`, {
       headers: {
         'Accept': 'application/json',
       },
-      next: { revalidate: 60 } // Cache and revalidate every 60 seconds
+      next: { revalidate: 30 }
     });
 
     if (!response.ok) {
@@ -20,34 +21,39 @@ export async function GET() {
     }
 
     const data = await response.json();
-
-    // Parse entities to extract relevant SkyTrain or system-wide alerts
+    
+    // Parse GTFS-RT alert entities safely
     const entities = data.entity || [];
     const alerts = entities
       .filter((entity: any) => entity.alert)
       .map((entity: any) => {
         const alert = entity.alert;
+        const headerText = alert.headerText?.translation?.[0]?.text || 'SkyTrain Service Update';
+        const descText = alert.descriptionText?.translation?.[0]?.text || '';
+        
         return {
-          id: entity.id,
-          header: alert.headerText?.translation?.[0]?.text || 'Service Update',
-          description: alert.descriptionText?.translation?.[0]?.text || '',
-          effect: alert.effect || 'UNKNOWN_EFFECT',
-          cause: alert.cause || 'UNKNOWN_CAUSE',
+          id: entity.id || Math.random().toString(),
+          header: headerText,
+          description: descText,
         };
       });
 
     return NextResponse.json(alerts, {
       headers: {
-        'Cache-Control': 'public, max-age=60, s-maxage=60, stale-while-revalidate=120'
+        'Cache-Control': 'public, max-age=30, s-maxage=30, stale-while-revalidate=60'
       }
     });
 
   } catch (error: any) {
-    console.error('Error fetching SkyTrain alerts:', error.message);
+    console.error('Error fetching live TransLink alerts:', error.message);
     
-    // Fallback normal service status if offline
+    // Return graceful status if feed encounters a temporary block
     return NextResponse.json([
-      { id: 'normal-1', header: 'Expo & Canada Line: Normal Service', description: 'All stations operating on regular schedules.', effect: 'NO_EFFECT' }
+      { 
+        id: 'fallback-1', 
+        header: 'Expo & Canada Line Status', 
+        description: 'Check official TransLink advisory page for active alerts.' 
+      }
     ]);
   }
 }
