@@ -13,7 +13,7 @@ export default function TrafficMap() {
   const [showBuses, setShowBuses] = useState(true);
   const [showSkyTrain, setShowSkyTrain] = useState(true);
 
-  // 1. Initialize Map with direct OpenStreetMap raster tiles (bulletproof)
+  // 1. Initialize Map with OpenStreetMap Raster Base Tiles
   useEffect(() => {
     if (map.current || !mapContainer.current) return;
 
@@ -26,7 +26,7 @@ export default function TrafficMap() {
             type: 'raster',
             tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
             tileSize: 256,
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            attribution: '&copy; OpenStreetMap contributors'
           }
         },
         layers: [
@@ -46,62 +46,80 @@ export default function TrafficMap() {
     map.current.addControl(new maplibregl.NavigationControl(), 'top-right');
 
     map.current.on('load', () => {
-      // Add SkyTrain Lines GeoJSON source
-      map.current?.addSource('skytrain-lines', {
-        type: 'geojson',
-        data: {
-          type: 'FeatureCollection',
-          features: [
-            {
-              type: 'Feature',
-              properties: { line: 'Expo' },
-              geometry: {
-                type: 'LineString',
-                coordinates: [
-                  [-123.1162, 49.2827], // Waterfront
-                  [-123.1040, 49.2770], // Stadium-Chinatown
-                  [-123.0990, 49.2630], // Commercial-Broadway
-                  [-123.0020, 49.2210], // Metrotown
-                  [-122.9120, 49.2040]  // New Westminster / Surrey
-                ]
-              }
-            },
-            {
-              type: 'Feature',
-              properties: { line: 'Canada' },
-              geometry: {
-                type: 'LineString',
-                coordinates: [
-                  [-123.1162, 49.2827], // Waterfront
-                  [-123.1160, 49.2600], // City Hall
-                  [-123.1340, 49.1940], // Bridgeport
-                  [-123.1340, 49.1830]  // YVR Airport / Brighouse
-                ]
-              }
-            }
-          ]
-        }
-      });
+      if (!map.current) return;
 
-      // Add SkyTrain visual layer
-      map.current?.addLayer({
-        id: 'skytrain-layer',
-        type: 'line',
-        source: 'skytrain-lines',
-        layout: {
-          'line-join': 'round',
-          'line-cap': 'round'
-        },
-        paint: {
-          'line-color': '#06b6d4',
-          'line-width': 5,
-          'line-opacity': 0.85
-        }
-      });
+      // Add SkyTrain Lines GeoJSON source safely after load
+      if (!map.current.getSource('skytrain-lines')) {
+        map.current.addSource('skytrain-lines', {
+          type: 'geojson',
+          data: {
+            type: 'FeatureCollection',
+            features: [
+              {
+                type: 'Feature',
+                properties: { line: 'Expo' },
+                geometry: {
+                  type: 'LineString',
+                  coordinates: [
+                    [-123.1162, 49.2827], // Waterfront
+                    [-123.1040, 49.2770], // Stadium-Chinatown
+                    [-123.0990, 49.2630], // Commercial-Broadway
+                    [-123.0020, 49.2210], // Metrotown
+                    [-122.9120, 49.2040]  // New Westminster / Surrey
+                  ]
+                }
+              },
+              {
+                type: 'Feature',
+                properties: { line: 'Canada' },
+                geometry: {
+                  type: 'LineString',
+                  coordinates: [
+                    [-123.1162, 49.2827], // Waterfront
+                    [-123.1160, 49.2600], // City Hall
+                    [-123.1340, 49.1940], // Bridgeport
+                    [-123.1340, 49.1830]  // YVR Airport / Brighouse
+                  ]
+                }
+              }
+            ]
+          }
+        });
+      }
+
+      // Add thick visual line layer for SkyTrain
+      if (!map.current.getLayer('skytrain-layer')) {
+        map.current.addLayer({
+          id: 'skytrain-layer',
+          type: 'line',
+          source: 'skytrain-lines',
+          layout: {
+            'line-join': 'round',
+            'line-cap': 'round'
+          },
+          paint: {
+            'line-color': '#0284c7', // Bright Sky Blue
+            'line-width': 8,          // High visibility thickness
+            'line-opacity': 0.95
+          }
+        });
+      }
     });
   }, []);
 
-  // 2. Fetch live buses periodically
+  // 2. Control SkyTrain layer visibility
+  useEffect(() => {
+    if (!map.current) return;
+    if (map.current.getLayer('skytrain-layer')) {
+      map.current.setLayoutProperty(
+        'skytrain-layer',
+        'visibility',
+        showSkyTrain ? 'visible' : 'none'
+      );
+    }
+  }, [showSkyTrain]);
+
+  // 3. Poll live buses
   useEffect(() => {
     if (!showBuses) return;
 
@@ -121,6 +139,61 @@ export default function TrafficMap() {
     const interval = setInterval(fetchBuses, 15000);
     return () => clearInterval(interval);
   }, [showBuses]);
+
+  // 4. Render bus markers with explicit inline styles & popups
+  useEffect(() => {
+    if (!map.current || !showBuses) return;
+
+    const markers: maplibregl.Marker[] = [];
+
+    buses.forEach((bus) => {
+      const lat = bus.Latitude;
+      const lon = bus.Longitude;
+      if (!lat || !lon) return;
+
+      const el = document.createElement('div');
+      el.className = 'marker-bus';
+      el.style.backgroundColor = '#0d9488';
+      el.style.color = 'white';
+      el.style.width = '32px';
+      el.style.height = '32px';
+      el.style.borderRadius = '50%';
+      el.style.display = 'flex';
+      el.style.alignItems = 'center';
+      el.style.justifyContent = 'center';
+      el.style.fontSize = '14px';
+      el.style.fontWeight = 'bold';
+      el.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.3)';
+      el.style.border = '2px solid white';
+      el.style.cursor = 'pointer';
+      el.innerHTML = '🚌';
+
+      const popup = new maplibregl.Popup({ offset: 25 }).setHTML(`
+        <div style="color: #0f172a; font-family: sans-serif; padding: 6px;">
+          <div style="font-weight: bold; font-size: 14px; color: #0d9488;">
+            Route ${bus.Route}
+          </div>
+          <div style="font-size: 12px; margin-top: 2px;">
+            <b>Destination:</b> ${bus.Destination}
+          </div>
+          <div style="font-size: 11px; color: #64748b; margin-top: 2px;">
+            Vehicle No: ${bus.VehicleNo}
+          </div>
+        </div>
+      `);
+
+      const marker = new maplibregl.Marker({ element: el })
+        .setLngLat([lon, lat])
+        .setPopup(popup)
+        .addTo(map.current!);
+
+      markers.push(marker);
+    });
+
+    return () => {
+      markers.forEach((m) => m.remove());
+    };
+  }, [buses, showBuses]);
 
   return (
     <div className="relative w-screen h-screen bg-slate-900">
@@ -161,50 +234,4 @@ export default function TrafficMap() {
       </div>
     </div>
   );
-// 3. Render live bus markers with interactive popups
-  useEffect(() => {
-    if (!map.current || !showBuses) return;
-
-    const markers: maplibregl.Marker[] = [];
-
-    buses.forEach((bus) => {
-      const lat = bus.Latitude;
-      const lon = bus.Longitude;
-      if (!lat || !lon) return;
-
-      // Create custom marker element
-      const el = document.createElement('div');
-      el.className = 'bg-teal-600 hover:bg-teal-400 p-1.5 rounded-full text-white text-xs font-bold shadow-lg cursor-pointer border-2 border-white flex items-center justify-center transition-transform hover:scale-110';
-      el.innerHTML = '🚌';
-
-      // Create popup content
-      const popup = new maplibregl.Popup({ offset: 25 }).setHTML(`
-        <div style="color: #0f172a; font-family: sans-serif; padding: 4px;">
-          <div style="font-weight: bold; font-size: 14px; margin-bottom: 2px; color: #0d9488;">
-            Route ${bus.Route}
-          </div>
-          <div style="font-size: 12px; margin-bottom: 2px;">
-            <b>Destination:</b> ${bus.Destination}
-          </div>
-          <div style="font-size: 11px; color: #64748b;">
-            Vehicle No: ${bus.VehicleNo}
-          </div>
-        </div>
-      `);
-
-      // Initialize marker and add to map
-      const marker = new maplibregl.Marker({ element: el })
-        .setLngLat([lon, lat])
-        .setPopup(popup)
-        .addTo(map.current!);
-
-      markers.push(marker);
-    });
-
-    // Cleanup markers when component unmounts or buses update
-    return () => {
-      markers.forEach((m) => m.remove());
-    };
-  }, [buses, showBuses]);
-
 }
