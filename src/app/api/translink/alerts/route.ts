@@ -1,18 +1,18 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, NextRequest } from 'next/server';
 
-export async function GET() {
-  const apiKey = process.env.TRANSLINK_API_KEY;
+export async function GET(request: NextRequest) {
+  // Check header or query parameter for manual key input, fallback to environment variable
+  const headerKey = request.headers.get('x-translink-key');
+  const queryKey = request.nextUrl.searchParams.get('apikey');
+  const apiKey = headerKey || queryKey || process.env.TRANSLINK_API_KEY;
 
   if (!apiKey) {
-    return NextResponse.json({ error: 'TransLink API key missing' }, { status: 500 });
+    return NextResponse.json({ error: 'TransLink API key missing' }, { status: 400 });
   }
 
   try {
-    // Request JSON format explicitly from TransLink GTFS-RT endpoint
     const response = await fetch(`https://gtfsapi.translink.ca/v3/gtfsalerts?apikey=${apiKey}`, {
-      headers: {
-        'Accept': 'application/json',
-      },
+      headers: { 'Accept': 'application/json' },
       next: { revalidate: 30 }
     });
 
@@ -21,39 +21,23 @@ export async function GET() {
     }
 
     const data = await response.json();
-    
-    // Parse GTFS-RT alert entities safely
     const entities = data.entity || [];
     const alerts = entities
       .filter((entity: any) => entity.alert)
       .map((entity: any) => {
         const alert = entity.alert;
-        const headerText = alert.headerText?.translation?.[0]?.text || 'SkyTrain Service Update';
-        const descText = alert.descriptionText?.translation?.[0]?.text || '';
-        
         return {
           id: entity.id || Math.random().toString(),
-          header: headerText,
-          description: descText,
+          header: alert.headerText?.translation?.[0]?.text || 'SkyTrain Service Update',
+          description: alert.descriptionText?.translation?.[0]?.text || '',
         };
       });
 
-    return NextResponse.json(alerts, {
-      headers: {
-        'Cache-Control': 'public, max-age=30, s-maxage=30, stale-while-revalidate=60'
-      }
-    });
-
+    return NextResponse.json(alerts);
   } catch (error: any) {
     console.error('Error fetching live TransLink alerts:', error.message);
-    
-    // Return graceful status if feed encounters a temporary block
     return NextResponse.json([
-      { 
-        id: 'fallback-1', 
-        header: 'Expo & Canada Line Status', 
-        description: 'Check official TransLink advisory page for active alerts.' 
-      }
+      { id: 'fallback-1', header: 'Expo & Canada Line Status', description: 'Normal service or check TransLink portal.' }
     ]);
   }
 }

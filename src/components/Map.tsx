@@ -7,7 +7,6 @@ import { Bus, Train } from 'lucide-react';
 import TransitAlerts from './TransitAlerts';
 import DriveBCCameras from './DriveBCCameras';
 
-// Coordinates defining track paths for animated SkyTrains
 const EXPO_LINE = [
   [-123.1162, 49.2827], // Waterfront
   [-123.1040, 49.2770], // Stadium-Chinatown
@@ -34,7 +33,7 @@ export default function TrafficMap() {
   const busMarkersRef = useRef<{ [key: string]: maplibregl.Marker }>({});
   const trainMarkersRef = useRef<maplibregl.Marker[]>([]);
 
-  // 1. Initialize Map with OpenStreetMap Raster Tiles & SkyTrain GeoJSON Source
+  // 1. Initialize Map
   useEffect(() => {
     if (map.current || !mapContainer.current) return;
 
@@ -85,14 +84,14 @@ export default function TrafficMap() {
           }
         ]
       },
-      center: [-123.1207, 49.2827], // Vancouver Center
+      center: [-123.1207, 49.2827],
       zoom: 11
     });
 
     map.current.addControl(new maplibregl.NavigationControl(), 'top-right');
   }, []);
 
-  // 2. Toggle SkyTrain Layer Visibility Instantly
+  // 2. Toggle SkyTrain Line Layer Visibility
   useEffect(() => {
     if (!map.current || !map.current.getLayer('skytrain-layer')) return;
     map.current.setLayoutProperty(
@@ -102,7 +101,7 @@ export default function TrafficMap() {
     );
   }, [showSkyTrain]);
 
-  // 3. Fetch Live Bus Positions Periodically
+  // 3. Fetch Live Buses
   useEffect(() => {
     if (!showBuses) return;
 
@@ -110,11 +109,9 @@ export default function TrafficMap() {
       try {
         const res = await fetch('/api/translink/buses');
         const data = await res.json();
-        if (Array.isArray(data)) {
-          setBuses(data);
-        }
+        if (Array.isArray(data)) setBuses(data);
       } catch (err) {
-        console.error('Error fetching live bus data:', err);
+        console.error('Error fetching buses:', err);
       }
     }
 
@@ -123,7 +120,7 @@ export default function TrafficMap() {
     return () => clearInterval(interval);
   }, [showBuses]);
 
-  // 4. Update & Smoothly Interpolate Live Bus Markers
+  // 4. Update Bus Markers with Smooth Transitions
   useEffect(() => {
     if (!map.current) return;
 
@@ -141,10 +138,8 @@ export default function TrafficMap() {
       if (!lat || !lon) return;
 
       if (busMarkersRef.current[id]) {
-        // Smoothly glide existing marker to new lat/lon coordinate via CSS transition
         busMarkersRef.current[id].setLngLat([lon, lat]);
       } else {
-        // Create new marker DOM element
         const el = document.createElement('div');
         el.style.backgroundColor = '#0d9488';
         el.style.color = 'white';
@@ -157,21 +152,14 @@ export default function TrafficMap() {
         el.style.fontSize = '16px';
         el.style.border = '2px solid white';
         el.style.boxShadow = '0 4px 10px rgba(0,0,0,0.4)';
-        el.style.transition = 'all 1s ease-in-out'; // Enables fluid animation
+        el.style.transition = 'all 1s ease-in-out';
         el.style.cursor = 'pointer';
         el.innerHTML = '🚌';
 
         const popup = new maplibregl.Popup({ offset: 25 }).setHTML(`
           <div style="color: #0f172a; font-family: sans-serif; padding: 6px;">
-            <div style="font-weight: bold; font-size: 14px; color: #0d9488;">
-              Route ${bus.Route}
-            </div>
-            <div style="font-size: 12px; margin-top: 2px;">
-              <b>Destination:</b> ${bus.Destination}
-            </div>
-            <div style="font-size: 11px; color: #64748b; margin-top: 2px;">
-              Vehicle No: ${bus.VehicleNo}
-            </div>
+            <div style="font-weight: bold; font-size: 14px; color: #0d9488;">Route ${bus.Route}</div>
+            <div style="font-size: 12px; margin-top: 2px;"><b>Destination:</b> ${bus.Destination}</div>
           </div>
         `);
 
@@ -185,7 +173,7 @@ export default function TrafficMap() {
     });
   }, [buses, showBuses]);
 
-  // 5. Animate Moving SkyTrain Markers along Track Geometries
+  // 5. Animate Moving SkyTrain Markers along Tracks
   useEffect(() => {
     if (!map.current) return;
 
@@ -280,7 +268,7 @@ export default function TrafficMap() {
           </button>
         </div>
 
-        {/* Live Service Alerts Panel */}
+        {/* Live Service Alerts Panel with Manual Key Input */}
         <TransitAlerts />
 
         {/* DriveBC Bridge Cameras Widget */}
