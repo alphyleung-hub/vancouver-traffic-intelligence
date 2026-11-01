@@ -3,37 +3,71 @@
 import { useEffect, useRef, useState } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { Bus, Train } from 'lucide-react';
-import TransitAlerts from './TransitAlerts';
-import DriveBCCameras from './DriveBCCameras';
+import { Train, Bus, Anchor, Compass } from 'lucide-react';
 
-const EXPO_LINE = [
-  [-123.1162, 49.2827], // Waterfront
-  [-123.1040, 49.2770], // Stadium-Chinatown
-  [-123.0990, 49.2630], // Commercial-Broadway
-  [-123.0020, 49.2210], // Metrotown
-  [-122.9120, 49.2040]  // New Westminster
-];
+if (typeof window !== 'undefined') {
+  maplibregl.setWorkerUrl('https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl-csp-worker.js');
+}
 
-const CANADA_LINE = [
-  [-123.1162, 49.2827], // Waterfront
-  [-123.1160, 49.2600], // City Hall
-  [-123.1340, 49.1940], // Bridgeport
-  [-123.1340, 49.1830]  // Brighouse
-];
+const NETWORK_ROUTES = {
+  canada: {
+    name: 'Canada Line (YVR / Brighouse)',
+    color: '#06b6d4',
+    stations: [
+      [-123.1162, 49.2827], [-123.1145, 49.2740], [-123.1160, 49.2600],
+      [-123.1250, 49.2430], [-123.1270, 49.2330], [-123.1280, 49.2260],
+      [-123.1340, 49.1940], [-123.1380, 49.1830], [-123.1550, 49.1930], [-123.1815, 49.1950]
+    ]
+  },
+  seabus: {
+    name: 'SeaBus (Waterfront - Lonsdale)',
+    color: '#10b981',
+    stations: [[-123.1130, 49.2855], [-123.0805, 49.3115]]
+  },
+  expo: {
+    name: 'Expo Line',
+    color: '#0284c7',
+    stations: [
+      [-123.1162, 49.2827], [-123.1040, 49.2770], [-123.0990, 49.2630],
+      [-123.0690, 49.2620], [-123.0310, 49.2380], [-123.0020, 49.2210],
+      [-122.9515, 49.2110], [-122.8460, 49.1900]
+    ]
+  },
+  millennium: {
+    name: 'Millennium Line',
+    color: '#eab308',
+    stations: [
+      [-123.0250, 49.2650], [-123.0690, 49.2620], [-122.9690, 49.2670],
+      [-122.8930, 49.2520], [-122.7910, 49.2750]
+    ]
+  }
+};
+
+function getBusGroupStyle(routeStr: string): { bg: string; label: string } {
+  const route = routeStr.trim().toUpperCase();
+  if (route.startsWith('R')) return { bg: '#ef4444', label: 'RapidBus' };
+  if (route.startsWith('2')) return { bg: '#10b981', label: 'North Van' };
+  if (route.startsWith('4')) return { bg: '#3b82f6', label: 'Richmond' };
+  if (route.startsWith('9') || route.startsWith('N')) return { bg: '#8b5cf6', label: 'Express' };
+  return { bg: '#f97316', label: 'Local' };
+}
+
+function lerp(start: number, end: number, amt: number) {
+  return (1 - amt) * start + amt * end;
+}
 
 export default function TrafficMap() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
 
-  const [buses, setBuses] = useState<any[]>([]);
+  const [statusMsg, setStatusMsg] = useState('Syncing regional data...');
+  const [activeLines, setActiveLines] = useState({ canada: true, seabus: true, expo: true, millennium: true });
   const [showBuses, setShowBuses] = useState(true);
-  const [showSkyTrain, setShowSkyTrain] = useState(true);
 
-  const busMarkersRef = useRef<{ [key: string]: maplibregl.Marker }>({});
   const trainMarkersRef = useRef<maplibregl.Marker[]>([]);
+  const busMarkersRef = useRef<maplibregl.Marker[]>([]);
+  const animFrameId = useRef<number | null>(null);
 
-  // 1. Initialize Map
   useEffect(() => {
     if (map.current || !mapContainer.current) return;
 
@@ -48,70 +82,101 @@ export default function TrafficMap() {
             tileSize: 256,
             attribution: '&copy; OpenStreetMap contributors'
           },
-          'skytrain-lines': {
+          'network-source': {
             type: 'geojson',
             data: {
               type: 'FeatureCollection',
-              features: [
-                {
-                  type: 'Feature',
-                  properties: { line: 'Expo' },
-                  geometry: { type: 'LineString', coordinates: EXPO_LINE }
-                },
-                {
-                  type: 'Feature',
-                  properties: { line: 'Canada' },
-                  geometry: { type: 'LineString', coordinates: CANADA_LINE }
-                }
-              ]
+              features: Object.entries(NETWORK_ROUTES).map(([key, route]) => ({
+                type: 'Feature',
+                properties: { line: key, color: route.color },
+                geometry: { type: 'LineString', coordinates: route.stations }
+              }))
             }
           }
         },
         layers: [
+          { id: 'osm-tiles-layer', type: 'raster', source: 'osm-tiles', minzoom: 0, maxzoom: 19 },
           {
-            id: 'osm-tiles-layer',
-            type: 'raster',
-            source: 'osm-tiles',
-            minzoom: 0,
-            maxzoom: 19
-          },
-          {
-            id: 'skytrain-layer',
+            id: 'network-tracks',
             type: 'line',
-            source: 'skytrain-lines',
+            source: 'network-source',
             layout: { 'line-join': 'round', 'line-cap': 'round' },
-            paint: { 'line-color': '#0284c7', 'line-width': 7, 'line-opacity': 0.95 }
+            paint: { 'line-color': ['get', 'color'], 'line-width': 6, 'line-opacity': 0.9 }
           }
         ]
       },
-      center: [-123.1207, 49.2827],
+      center: [-123.1000, 49.2600],
       zoom: 11
     });
 
     map.current.addControl(new maplibregl.NavigationControl(), 'top-right');
   }, []);
 
-  // 2. Toggle SkyTrain Line Layer Visibility
   useEffect(() => {
-    if (!map.current || !map.current.getLayer('skytrain-layer')) return;
-    map.current.setLayoutProperty(
-      'skytrain-layer',
-      'visibility',
-      showSkyTrain ? 'visible' : 'none'
-    );
-  }, [showSkyTrain]);
-
-  // 3. Fetch Live Buses
-  useEffect(() => {
-    if (!showBuses) return;
+    if (!showBuses) {
+      busMarkersRef.current.forEach(m => m.remove());
+      busMarkersRef.current = [];
+      setStatusMsg('Bus tracking paused');
+      return;
+    }
 
     async function fetchBuses() {
       try {
-        const res = await fetch('/api/translink/buses');
+        const res = await fetch('/api/translink/positions');
         const data = await res.json();
-        if (Array.isArray(data)) setBuses(data);
+        
+        if (res.ok && data.success && map.current) {
+          setStatusMsg(`Synced ${data.count} regional units`);
+
+          busMarkersRef.current.forEach(m => m.remove());
+          busMarkersRef.current = [];
+
+          const newMarkers: maplibregl.Marker[] = [];
+          data.vehicles.slice(0, 300).forEach((bus: any) => {
+            if (!bus.lat || !bus.lon) return;
+
+            const displayRoute = bus.routeNumber && bus.routeNumber !== 'Bus' ? bus.routeNumber : 'Bus';
+            const groupStyle = getBusGroupStyle(displayRoute);
+
+            const el = document.createElement('div');
+            el.style.backgroundColor = groupStyle.bg;
+            el.style.color = 'white';
+            el.style.padding = '2px 6px';
+            el.style.borderRadius = '12px';
+            el.style.display = 'flex';
+            el.style.alignItems = 'center';
+            el.style.gap = '3px';
+            el.style.fontSize = '11px';
+            el.style.fontWeight = 'bold';
+            el.style.border = '2px solid white';
+            el.style.boxShadow = '0 2px 6px rgba(0,0,0,0.4)';
+            el.style.cursor = 'pointer';
+            el.innerHTML = `🚌 <span>${displayRoute}</span>`;
+
+            const popup = new maplibregl.Popup({ offset: 20, closeButton: false }).setHTML(`
+              <div style="color: #0f172a; font-family: sans-serif; padding: 4px;">
+                <div style="font-weight: bold; font-size: 12px; color: ${groupStyle.bg};">Route ${displayRoute} (${groupStyle.label})</div>
+                <div style="font-size: 11px; margin-top: 2px;"><b>Vehicle ID:</b> ${bus.id}</div>
+              </div>
+            `);
+
+            const marker = new maplibregl.Marker({ element: el })
+              .setLngLat([bus.lon, bus.lat])
+              .setPopup(popup)
+              .addTo(map.current!);
+
+            el.addEventListener('mouseenter', () => marker.togglePopup());
+            el.addEventListener('mouseleave', () => marker.togglePopup());
+
+            newMarkers.push(marker);
+          });
+
+          busMarkersRef.current = newMarkers;
+        } else {
+          setStatusMsg('Error fetching data');
+        }
       } catch (err) {
-        console.error('Error fetching buses:', err);
+        setStatusMsg('Failed to fetch regional feed');
       }
     }
 
@@ -120,159 +185,178 @@ export default function TrafficMap() {
     return () => clearInterval(interval);
   }, [showBuses]);
 
-  // 4. Update Bus Markers with Smooth Transitions
-  useEffect(() => {
-    if (!map.current) return;
-
-    if (!showBuses) {
-      Object.values(busMarkersRef.current).forEach((m) => m.remove());
-      busMarkersRef.current = {};
-      return;
-    }
-
-    buses.forEach((bus) => {
-      const id = bus.VehicleNo || `${bus.Route}-${bus.Latitude}`;
-      const lat = bus.Latitude;
-      const lon = bus.Longitude;
-
-      if (!lat || !lon) return;
-
-      if (busMarkersRef.current[id]) {
-        busMarkersRef.current[id].setLngLat([lon, lat]);
-      } else {
-        const el = document.createElement('div');
-        el.style.backgroundColor = '#0d9488';
-        el.style.color = 'white';
-        el.style.width = '34px';
-        el.style.height = '34px';
-        el.style.borderRadius = '50%';
-        el.style.display = 'flex';
-        el.style.alignItems = 'center';
-        el.style.justifyContent = 'center';
-        el.style.fontSize = '16px';
-        el.style.border = '2px solid white';
-        el.style.boxShadow = '0 4px 10px rgba(0,0,0,0.4)';
-        el.style.transition = 'all 1s ease-in-out';
-        el.style.cursor = 'pointer';
-        el.innerHTML = '🚌';
-
-        const popup = new maplibregl.Popup({ offset: 25 }).setHTML(`
-          <div style="color: #0f172a; font-family: sans-serif; padding: 6px;">
-            <div style="font-weight: bold; font-size: 14px; color: #0d9488;">Route ${bus.Route}</div>
-            <div style="font-size: 12px; margin-top: 2px;"><b>Destination:</b> ${bus.Destination}</div>
-          </div>
-        `);
-
-        const marker = new maplibregl.Marker({ element: el })
-          .setLngLat([lon, lat])
-          .setPopup(popup)
-          .addTo(map.current!);
-
-        busMarkersRef.current[id] = marker;
-      }
-    });
-  }, [buses, showBuses]);
-
-  // 5. Animate Moving SkyTrain Markers along Tracks
   useEffect(() => {
     if (!map.current) return;
 
     trainMarkersRef.current.forEach((m) => m.remove());
     trainMarkersRef.current = [];
 
-    if (!showSkyTrain) return;
+    if (animFrameId.current) {
+      cancelAnimationFrame(animFrameId.current);
+      animFrameId.current = null;
+    }
 
-    const createTrainElement = () => {
-      const el = document.createElement('div');
-      el.style.backgroundColor = '#0284c7';
-      el.style.color = 'white';
-      el.style.width = '28px';
-      el.style.height = '28px';
-      el.style.borderRadius = '50%';
-      el.style.display = 'flex';
-      el.style.alignItems = 'center';
-      el.style.justifyContent = 'center';
-      el.style.fontSize = '12px';
-      el.style.border = '2px solid white';
-      el.style.boxShadow = '0 2px 6px rgba(0,0,0,0.4)';
-      el.innerHTML = '🚆';
-      return el;
+    const activeFleet: Array<{
+      marker: maplibregl.Marker;
+      stations: number[][];
+      progress: number;
+      speed: number;
+      direction: string;
+    }> = [];
+
+    let unitCounter = 400;
+
+    Object.entries(NETWORK_ROUTES).forEach(([key, route]) => {
+      if (!activeLines[key as keyof typeof activeLines]) return;
+
+      const lineConfigs = [
+        { dir: 'Outbound', offset: 0.1, reverse: false },
+        { dir: 'Outbound', offset: 0.6, reverse: false },
+        { dir: 'Inbound', offset: 0.35, reverse: true },
+        { dir: 'Inbound', offset: 0.85, reverse: true }
+      ];
+
+      lineConfigs.forEach((config) => {
+        const unitId = `UNIT-${unitCounter++}`;
+        const stationList = config.reverse ? [...route.stations].reverse() : route.stations;
+
+        const el = document.createElement('div');
+        el.style.backgroundColor = route.color;
+        el.style.color = 'white';
+        el.style.width = key === 'seabus' ? '30px' : '28px';
+        el.style.height = key === 'seabus' ? '30px' : '28px';
+        el.style.borderRadius = '50%';
+        el.style.display = 'flex';
+        el.style.alignItems = 'center';
+        el.style.justifyContent = 'center';
+        el.style.fontSize = '12px';
+        el.style.border = '2px solid white';
+        el.style.boxShadow = '0 3px 10px rgba(0,0,0,0.4)';
+        el.style.cursor = 'pointer';
+        el.innerHTML = key === 'seabus' ? '⛴️' : '🚆';
+
+        const popup = new maplibregl.Popup({ offset: 25, closeButton: false }).setHTML(`
+          <div style="color: #0f172a; font-family: sans-serif; padding: 4px;">
+            <div style="font-weight: bold; font-size: 13px; color: ${route.color};">${route.name} (${config.dir})</div>
+            <div style="font-size: 11px; margin-top: 2px;"><b>Unit ID:</b> ${unitId}</div>
+          </div>
+        `);
+
+        const marker = new maplibregl.Marker({ element: el })
+          .setLngLat(stationList[0] as [number, number])
+          .setPopup(popup)
+          .addTo(map.current!);
+
+        el.addEventListener('mouseenter', () => marker.togglePopup());
+        el.addEventListener('mouseleave', () => marker.togglePopup());
+
+        activeFleet.push({
+          marker,
+          stations: stationList,
+          progress: config.offset,
+          speed: key === 'seabus' ? 0.00003 : 0.00006,
+          direction: config.dir
+        });
+
+        trainMarkersRef.current.push(marker);
+      });
+    });
+
+    if (activeFleet.length === 0) return;
+
+    let lastTime = performance.now();
+
+    const animateLoop = (currentTime: number) => {
+      const deltaTime = (currentTime - lastTime) / 1000;
+      lastTime = currentTime;
+
+      activeFleet.forEach((item) => {
+        item.progress = (item.progress + item.speed * (deltaTime * 60)) % 1;
+
+        const totalSegments = item.stations.length - 1;
+        const scaledProgress = item.progress * totalSegments;
+        const segIndex = Math.floor(scaledProgress);
+        const segAmt = scaledProgress - segIndex;
+
+        const p1 = item.stations[segIndex];
+        const p2 = item.stations[segIndex + 1] || item.stations[0];
+
+        if (p1 && p2) {
+          const currentLon = lerp(p1[0], p2[0], segAmt);
+          const currentLat = lerp(p1[1], p2[1], segAmt);
+          item.marker.setLngLat([currentLon, currentLat]);
+        }
+      });
+
+      animFrameId.current = requestAnimationFrame(animateLoop);
     };
 
-    const expoTrain = new maplibregl.Marker({ element: createTrainElement() })
-      .setLngLat(EXPO_LINE[0] as [number, number])
-      .addTo(map.current);
+    animFrameId.current = requestAnimationFrame(animateLoop);
 
-    const canadaTrain = new maplibregl.Marker({ element: createTrainElement() })
-      .setLngLat(CANADA_LINE[0] as [number, number])
-      .addTo(map.current);
-
-    trainMarkersRef.current = [expoTrain, canadaTrain];
-
-    let step = 0;
-    const maxSteps = 300;
-
-    const animateTrains = () => {
-      step = (step + 1) % maxSteps;
-      const progress = step / maxSteps;
-
-      const expoIndex = Math.floor(progress * (EXPO_LINE.length - 1));
-      const canadaIndex = Math.floor(progress * (CANADA_LINE.length - 1));
-
-      if (expoTrain && EXPO_LINE[expoIndex]) {
-        expoTrain.setLngLat(EXPO_LINE[expoIndex] as [number, number]);
-      }
-      if (canadaTrain && CANADA_LINE[canadaIndex]) {
-        canadaTrain.setLngLat(CANADA_LINE[canadaIndex] as [number, number]);
+    return () => {
+      if (animFrameId.current) {
+        cancelAnimationFrame(animFrameId.current);
+        animFrameId.current = null;
       }
     };
-
-    const interval = setInterval(animateTrains, 100);
-    return () => clearInterval(interval);
-  }, [showSkyTrain]);
+  }, [activeLines]);
 
   return (
     <div className="relative w-screen h-screen bg-slate-900">
       <div ref={mapContainer} className="absolute inset-0 w-full h-full" />
 
-      {/* Control Overlay Sidebar */}
-      <div className="absolute top-4 left-4 z-10 bg-slate-900/90 backdrop-blur border border-slate-800 p-4 rounded-xl shadow-xl text-white w-80 max-h-[92vh] overflow-y-auto">
-        <h1 className="text-lg font-bold bg-gradient-to-r from-teal-400 to-blue-500 bg-clip-text text-transparent">
-          Vancouver Traffic Intel
+      {/* Control Sidebar */}
+      <div className="absolute top-4 left-4 z-10 bg-slate-900/90 backdrop-blur border border-slate-800 p-4 rounded-xl shadow-xl text-white w-80">
+        <h1 className="text-lg font-bold bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent flex items-center gap-2">
+          <Compass size={20} className="text-cyan-400" /> Regional Fleet Intel
         </h1>
-        <p className="text-xs text-slate-400 mb-4">TransLink & DriveBC Live Feed</p>
+        <p className="text-xs text-slate-400 mb-4 font-mono">Categorized Route Network</p>
+        <p className="text-[10px] text-cyan-400 mb-4 font-mono">{statusMsg}</p>
 
-        <div className="space-y-2">
-          <button
-            onClick={() => setShowSkyTrain(!showSkyTrain)}
-            className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-sm transition-colors ${
-              showSkyTrain ? 'bg-cyan-600/30 border-cyan-500 text-cyan-200' : 'bg-slate-800 border-slate-700 text-slate-400'
-            }`}
-          >
-            <span className="flex items-center gap-2">
-              <Train size={16} /> SkyTrain Moving
-            </span>
-            <span className="text-xs">{showSkyTrain ? 'ON' : 'OFF'}</span>
-          </button>
-
+        {/* Live Buses Toggle & Color Legend */}
+        <div className="mb-3 space-y-2">
           <button
             onClick={() => setShowBuses(!showBuses)}
-            className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-sm transition-colors ${
-              showBuses ? 'bg-teal-600/30 border-teal-500 text-teal-200' : 'bg-slate-800 border-slate-700 text-slate-400'
+            className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs transition-colors ${
+              showBuses ? 'bg-orange-600/30 border-orange-500 text-orange-200' : 'bg-slate-800 border-slate-700 text-slate-400'
             }`}
           >
             <span className="flex items-center gap-2">
-              <Bus size={16} /> Live Buses ({buses.length})
+              <Bus size={16} /> Regional Buses
             </span>
-            <span className="text-xs">{showBuses ? 'ON' : 'OFF'}</span>
+            <span>{showBuses ? 'ON' : 'OFF'}</span>
           </button>
+
+          {showBuses && (
+            <div className="grid grid-cols-2 gap-1.5 text-[10px] p-2 bg-slate-950/60 rounded-lg border border-slate-800 text-slate-300 font-mono">
+              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-red-500"></span> RapidBus (R)</span>
+              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> North Van (2xx)</span>
+              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-blue-500"></span> Richmond (4xx)</span>
+              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-purple-500"></span> Express (9x/N)</span>
+            </div>
+          )}
         </div>
 
-        {/* Live Service Alerts Panel with Manual Key Input */}
-        <TransitAlerts />
-
-        {/* DriveBC Bridge Cameras Widget */}
-        <DriveBCCameras />
+        {/* Rapid Transit Line Toggles */}
+        <div className="space-y-2">
+          {Object.entries(NETWORK_ROUTES).map(([key, route]) => (
+            <button
+              key={key}
+              onClick={() => setActiveLines(prev => ({ ...prev, [key]: !prev[key as keyof typeof activeLines] }))}
+              className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs transition-colors ${
+                activeLines[key as keyof typeof activeLines]
+                  ? 'bg-slate-800 border-slate-600 text-white'
+                  : 'bg-slate-900/50 border-slate-800 text-slate-500'
+              }`}
+            >
+              <span className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: route.color }} />
+                {key === 'seabus' ? <Anchor size={14} /> : <Train size={14} />} {route.name}
+              </span>
+              <span>{activeLines[key as keyof typeof activeLines] ? 'ON' : 'OFF'}</span>
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
