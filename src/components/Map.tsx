@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { Train, Bus, Anchor, Compass } from 'lucide-react';
+import { Train, Bus, AlertTriangle, Anchor, Compass, Filter, Camera, Car } from 'lucide-react';
 
 if (typeof window !== 'undefined') {
   maplibregl.setWorkerUrl('https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl-csp-worker.js');
@@ -46,6 +46,7 @@ const NETWORK_ROUTES = {
 function getBusGroupStyle(routeStr: string): { bg: string; label: string } {
   const route = routeStr.trim().toUpperCase();
   if (route.startsWith('R')) return { bg: '#ef4444', label: 'RapidBus' };
+  if (route === '10') return { bg: '#2563eb', label: 'Route 10' };
   if (route.startsWith('2')) return { bg: '#10b981', label: 'North Van' };
   if (route.startsWith('4')) return { bg: '#3b82f6', label: 'Richmond' };
   if (route.startsWith('9') || route.startsWith('N')) return { bg: '#8b5cf6', label: 'Express' };
@@ -63,9 +64,16 @@ export default function TrafficMap() {
   const [statusMsg, setStatusMsg] = useState('Syncing regional data...');
   const [activeLines, setActiveLines] = useState({ canada: true, seabus: true, expo: true, millennium: true });
   const [showBuses, setShowBuses] = useState(true);
+  const [showDriveBC, setShowDriveBC] = useState(true);
+  const [showWebcams, setShowWebcams] = useState(true);
+  const [showParking, setShowParking] = useState(true);
+  const [routeFilter, setRouteFilter] = useState('');
 
   const trainMarkersRef = useRef<maplibregl.Marker[]>([]);
   const busMarkersRef = useRef<maplibregl.Marker[]>([]);
+  const driveBCMarkersRef = useRef<maplibregl.Marker[]>([]);
+  const webcamMarkersRef = useRef<maplibregl.Marker[]>([]);
+  const parkingMarkersRef = useRef<maplibregl.Marker[]>([]);
   const animFrameId = useRef<number | null>(null);
 
   useEffect(() => {
@@ -112,11 +120,11 @@ export default function TrafficMap() {
     map.current.addControl(new maplibregl.NavigationControl(), 'top-right');
   }, []);
 
+  // Fetch Live Buses
   useEffect(() => {
     if (!showBuses) {
       busMarkersRef.current.forEach(m => m.remove());
       busMarkersRef.current = [];
-      setStatusMsg('Bus tracking paused');
       return;
     }
 
@@ -126,36 +134,43 @@ export default function TrafficMap() {
         const data = await res.json();
         
         if (res.ok && data.success && map.current) {
-          setStatusMsg(`Synced ${data.count} regional units`);
-
           busMarkersRef.current.forEach(m => m.remove());
           busMarkersRef.current = [];
 
+          let vehicles = data.vehicles;
+          if (routeFilter.trim() !== '') {
+            vehicles = vehicles.filter((v: any) => 
+              v.routeNumber.toLowerCase().includes(routeFilter.trim().toLowerCase())
+            );
+          }
+
+          setStatusMsg(`Synced ${data.count} units`);
+
           const newMarkers: maplibregl.Marker[] = [];
-          data.vehicles.slice(0, 300).forEach((bus: any) => {
+          vehicles.slice(0, 300).forEach((bus: any) => {
             if (!bus.lat || !bus.lon) return;
 
             const displayRoute = bus.routeNumber && bus.routeNumber !== 'Bus' ? bus.routeNumber : 'Bus';
             const groupStyle = getBusGroupStyle(displayRoute);
 
             const el = document.createElement('div');
-            el.style.backgroundColor = groupStyle.bg;
+            el.style.backgroundColor = displayRoute === '10' ? '#2563eb' : groupStyle.bg;
             el.style.color = 'white';
-            el.style.padding = '2px 6px';
-            el.style.borderRadius = '12px';
+            el.style.padding = '3px 8px';
+            el.style.borderRadius = '14px';
             el.style.display = 'flex';
             el.style.alignItems = 'center';
-            el.style.gap = '3px';
-            el.style.fontSize = '11px';
+            el.style.gap = '4px';
+            el.style.fontSize = '12px';
             el.style.fontWeight = 'bold';
             el.style.border = '2px solid white';
-            el.style.boxShadow = '0 2px 6px rgba(0,0,0,0.4)';
+            el.style.boxShadow = '0 3px 8px rgba(0,0,0,0.4)';
             el.style.cursor = 'pointer';
             el.innerHTML = `🚌 <span>${displayRoute}</span>`;
 
             const popup = new maplibregl.Popup({ offset: 20, closeButton: false }).setHTML(`
               <div style="color: #0f172a; font-family: sans-serif; padding: 4px;">
-                <div style="font-weight: bold; font-size: 12px; color: ${groupStyle.bg};">Route ${displayRoute} (${groupStyle.label})</div>
+                <div style="font-weight: bold; font-size: 13px; color: ${groupStyle.bg};">Route ${displayRoute} (${groupStyle.label})</div>
                 <div style="font-size: 11px; margin-top: 2px;"><b>Vehicle ID:</b> ${bus.id}</div>
               </div>
             `);
@@ -172,59 +187,240 @@ export default function TrafficMap() {
           });
 
           busMarkersRef.current = newMarkers;
-        } else {
-          setStatusMsg('Error fetching data');
         }
       } catch (err) {
-        setStatusMsg('Failed to fetch regional feed');
+        setStatusMsg('Failed to fetch bus feed');
       }
     }
 
     fetchBuses();
     const interval = setInterval(fetchBuses, 10000);
     return () => clearInterval(interval);
-  }, [showBuses]);
+  }, [showBuses, routeFilter]);
 
+  // Fetch DriveBC Highway Events
   useEffect(() => {
-    if (!map.current) return;
-
-    trainMarkersRef.current.forEach((m) => m.remove());
-    trainMarkersRef.current = [];
-
-    if (animFrameId.current) {
-      cancelAnimationFrame(animFrameId.current);
-      animFrameId.current = null;
+    if (!showDriveBC) {
+      driveBCMarkersRef.current.forEach(m => m.remove());
+      driveBCMarkersRef.current = [];
+      return;
     }
 
-    const activeFleet: Array<{
-      marker: maplibregl.Marker;
-      stations: number[][];
-      progress: number;
-      speed: number;
-      direction: string;
-    }> = [];
+    async function fetchDriveBC() {
+      try {
+        const res = await fetch('/api/drivebc/events');
+        const data = await res.json();
 
+        if (res.ok && data.success && map.current) {
+          driveBCMarkersRef.current.forEach(m => m.remove());
+          driveBCMarkersRef.current = [];
+
+          const newMarkers: maplibregl.Marker[] = [];
+          data.events.forEach((ev: any) => {
+            if (!ev.lat || !ev.lon) return;
+
+            const el = document.createElement('div');
+            el.style.backgroundColor = ev.severity === 'MAJOR' ? '#dc2626' : '#f59e0b';
+            el.style.color = 'white';
+            el.style.width = '26px';
+            el.style.height = '26px';
+            el.style.borderRadius = '50%';
+            el.style.display = 'flex';
+            el.style.alignItems = 'center';
+            el.style.justifyContent = 'center';
+            el.style.fontSize = '12px';
+            el.style.border = '2px solid white';
+            el.style.boxShadow = '0 2px 6px rgba(0,0,0,0.4)';
+            el.style.cursor = 'pointer';
+            el.innerHTML = '⚠️';
+
+            const popup = new maplibregl.Popup({ offset: 20, closeButton: false }).setHTML(`
+              <div style="color: #0f172a; font-family: sans-serif; padding: 4px; max-width: 200px;">
+                <div style="font-weight: bold; font-size: 12px; color: #dc2626;">DriveBC: ${ev.eventType}</div>
+                <div style="font-size: 11px; margin-top: 2px; font-weight: bold;">${ev.headline}</div>
+                <div style="font-size: 10px; color: #475569; margin-top: 2px;">${ev.description.substring(0, 80)}...</div>
+              </div>
+            `);
+
+            const marker = new maplibregl.Marker({ element: el })
+              .setLngLat([ev.lon, ev.lat])
+              .setPopup(popup)
+              .addTo(map.current!);
+
+            el.addEventListener('mouseenter', () => marker.togglePopup());
+            el.addEventListener('mouseleave', () => marker.togglePopup());
+
+            newMarkers.push(marker);
+          });
+
+          driveBCMarkersRef.current = newMarkers;
+        }
+      } catch (err) {
+        console.error('Failed to fetch DriveBC data');
+      }
+    }
+
+    fetchDriveBC();
+    const interval = setInterval(fetchDriveBC, 60000);
+    return () => clearInterval(interval);
+  }, [showDriveBC]);
+
+  // Fetch BC HighwayCams
+  useEffect(() => {
+    if (!showWebcams) {
+      webcamMarkersRef.current.forEach(m => m.remove());
+      webcamMarkersRef.current = [];
+      return;
+    }
+
+    async function fetchWebcams() {
+      try {
+        const res = await fetch('/api/drivebc/webcams');
+        const data = await res.json();
+
+        if (res.ok && data.success && map.current) {
+          webcamMarkersRef.current.forEach(m => m.remove());
+          webcamMarkersRef.current = [];
+
+          const newMarkers: maplibregl.Marker[] = [];
+          data.webcams.forEach((cam: any) => {
+            if (!cam.lat || !cam.lon) return;
+
+            const el = document.createElement('div');
+            el.style.backgroundColor = '#0284c7';
+            el.style.color = 'white';
+            el.style.width = '26px';
+            el.style.height = '26px';
+            el.style.borderRadius = '50%';
+            el.style.display = 'flex';
+            el.style.alignItems = 'center';
+            el.style.justifyContent = 'center';
+            el.style.fontSize = '12px';
+            el.style.border = '2px solid white';
+            el.style.boxShadow = '0 2px 6px rgba(0,0,0,0.4)';
+            el.style.cursor = 'pointer';
+            el.innerHTML = '📷';
+
+            const popupHTML = `
+              <div style="color: #0f172a; font-family: sans-serif; padding: 4px; max-width: 240px;">
+                <div style="font-weight: bold; font-size: 12px; color: #0284c7;">${cam.name}</div>
+                ${cam.imageUrl ? `<img src="${cam.imageUrl}" alt="${cam.name}" style="width: 100%; border-radius: 6px; margin-top: 6px; border: 1px solid #cbd5e1;" />` : ''}
+                <div style="font-size: 10px; color: #64748b; margin-top: 4px;">${cam.caption}</div>
+              </div>
+            `;
+
+            const popup = new maplibregl.Popup({ offset: 20 }).setHTML(popupHTML);
+
+            const marker = new maplibregl.Marker({ element: el })
+              .setLngLat([cam.lon, cam.lat])
+              .setPopup(popup)
+              .addTo(map.current!);
+
+            newMarkers.push(marker);
+          });
+
+          webcamMarkersRef.current = newMarkers;
+        }
+      } catch (err) {
+        console.error('Failed to fetch HighwayCams');
+      }
+    }
+
+    fetchWebcams();
+  }, [showWebcams]);
+
+  // Fetch BC Parks Parking
+  useEffect(() => {
+    if (!showParking) {
+      parkingMarkersRef.current.forEach(m => m.remove());
+      parkingMarkersRef.current = [];
+      return;
+    }
+
+    async function fetchParking() {
+      try {
+        const res = await fetch('/api/bcparks/parking');
+        const data = await res.json();
+
+        if (res.ok && data.success && map.current) {
+          parkingMarkersRef.current.forEach(m => m.remove());
+          parkingMarkersRef.current = [];
+
+          const newMarkers: maplibregl.Marker[] = [];
+          data.parking.forEach((pk: any) => {
+            if (!pk.lat || !pk.lon) return;
+
+            const el = document.createElement('div');
+            el.style.backgroundColor = '#059669';
+            el.style.color = 'white';
+            el.style.width = '30px';
+            el.style.height = '30px';
+            el.style.borderRadius = '8px';
+            el.style.display = 'flex';
+            el.style.alignItems = 'center';
+            el.style.justifyContent = 'center';
+            el.style.fontSize = '14px';
+            el.style.border = '2px solid white';
+            el.style.boxShadow = '0 4px 10px rgba(0,0,0,0.3)';
+            el.style.cursor = 'pointer';
+            el.innerHTML = '🅿️';
+
+            const popup = new maplibregl.Popup({ offset: 20, closeButton: false }).setHTML(`
+              <div style="color: #0f172a; font-family: sans-serif; padding: 6px; max-width: 220px;">
+                <div style="font-weight: bold; font-size: 13px; color: #059669; display: flex; align-items: center; gap: 4px;">
+                  🅿️ Regional Parking
+                </div>
+                <div style="font-size: 12px; margin-top: 4px; font-weight: bold;">${pk.name}</div>
+                <div style="font-size: 11px; color: #475569; margin-top: 2px;">${pk.description}</div>
+              </div>
+            `);
+
+            const marker = new maplibregl.Marker({ element: el })
+              .setLngLat([pk.lon, pk.lat])
+              .setPopup(popup)
+              .addTo(map.current!);
+
+            el.addEventListener('mouseenter', () => marker.togglePopup());
+            el.addEventListener('mouseleave', () => marker.togglePopup());
+
+            newMarkers.push(marker);
+          });
+
+          parkingMarkersRef.current = newMarkers;
+        }
+      } catch (err) {
+        console.error('Failed to fetch BC Parks Parking');
+      }
+    }
+
+    fetchParking();
+  }, [showParking]);
+
+  // Train animation effect
+  useEffect(() => {
+    if (!map.current) return;
+    trainMarkersRef.current.forEach((m) => m.remove());
+    trainMarkersRef.current = [];
+    if (animFrameId.current) cancelAnimationFrame(animFrameId.current);
+
+    const activeFleet: Array<{ marker: maplibregl.Marker; stations: number[][]; progress: number; speed: number; direction: string }> = [];
     let unitCounter = 400;
 
     Object.entries(NETWORK_ROUTES).forEach(([key, route]) => {
       if (!activeLines[key as keyof typeof activeLines]) return;
-
       const lineConfigs = [
         { dir: 'Outbound', offset: 0.1, reverse: false },
-        { dir: 'Outbound', offset: 0.6, reverse: false },
-        { dir: 'Inbound', offset: 0.35, reverse: true },
-        { dir: 'Inbound', offset: 0.85, reverse: true }
+        { dir: 'Inbound', offset: 0.35, reverse: true }
       ];
 
       lineConfigs.forEach((config) => {
         const unitId = `UNIT-${unitCounter++}`;
         const stationList = config.reverse ? [...route.stations].reverse() : route.stations;
-
         const el = document.createElement('div');
         el.style.backgroundColor = route.color;
         el.style.color = 'white';
-        el.style.width = key === 'seabus' ? '30px' : '28px';
-        el.style.height = key === 'seabus' ? '30px' : '28px';
+        el.style.width = '28px';
+        el.style.height = '28px';
         el.style.borderRadius = '50%';
         el.style.display = 'flex';
         el.style.alignItems = 'center';
@@ -232,73 +428,34 @@ export default function TrafficMap() {
         el.style.fontSize = '12px';
         el.style.border = '2px solid white';
         el.style.boxShadow = '0 3px 10px rgba(0,0,0,0.4)';
-        el.style.cursor = 'pointer';
         el.innerHTML = key === 'seabus' ? '⛴️' : '🚆';
 
-        const popup = new maplibregl.Popup({ offset: 25, closeButton: false }).setHTML(`
-          <div style="color: #0f172a; font-family: sans-serif; padding: 4px;">
-            <div style="font-weight: bold; font-size: 13px; color: ${route.color};">${route.name} (${config.dir})</div>
-            <div style="font-size: 11px; margin-top: 2px;"><b>Unit ID:</b> ${unitId}</div>
-          </div>
-        `);
-
-        const marker = new maplibregl.Marker({ element: el })
-          .setLngLat(stationList[0] as [number, number])
-          .setPopup(popup)
-          .addTo(map.current!);
-
-        el.addEventListener('mouseenter', () => marker.togglePopup());
-        el.addEventListener('mouseleave', () => marker.togglePopup());
-
-        activeFleet.push({
-          marker,
-          stations: stationList,
-          progress: config.offset,
-          speed: key === 'seabus' ? 0.00003 : 0.00006,
-          direction: config.dir
-        });
-
+        const marker = new maplibregl.Marker({ element: el }).setLngLat(stationList[0] as [number, number]).addTo(map.current!);
+        activeFleet.push({ marker, stations: stationList, progress: config.offset, speed: 0.00005, direction: config.dir });
         trainMarkersRef.current.push(marker);
       });
     });
 
-    if (activeFleet.length === 0) return;
-
     let lastTime = performance.now();
-
     const animateLoop = (currentTime: number) => {
       const deltaTime = (currentTime - lastTime) / 1000;
       lastTime = currentTime;
-
       activeFleet.forEach((item) => {
         item.progress = (item.progress + item.speed * (deltaTime * 60)) % 1;
-
         const totalSegments = item.stations.length - 1;
         const scaledProgress = item.progress * totalSegments;
         const segIndex = Math.floor(scaledProgress);
         const segAmt = scaledProgress - segIndex;
-
         const p1 = item.stations[segIndex];
         const p2 = item.stations[segIndex + 1] || item.stations[0];
-
         if (p1 && p2) {
-          const currentLon = lerp(p1[0], p2[0], segAmt);
-          const currentLat = lerp(p1[1], p2[1], segAmt);
-          item.marker.setLngLat([currentLon, currentLat]);
+          item.marker.setLngLat([lerp(p1[0], p2[0], segAmt), lerp(p1[1], p2[1], segAmt)]);
         }
       });
-
       animFrameId.current = requestAnimationFrame(animateLoop);
     };
-
     animFrameId.current = requestAnimationFrame(animateLoop);
-
-    return () => {
-      if (animFrameId.current) {
-        cancelAnimationFrame(animFrameId.current);
-        animFrameId.current = null;
-      }
-    };
+    return () => { if (animFrameId.current) cancelAnimationFrame(animFrameId.current); };
   }, [activeLines]);
 
   return (
@@ -308,12 +465,26 @@ export default function TrafficMap() {
       {/* Control Sidebar */}
       <div className="absolute top-4 left-4 z-10 bg-slate-900/90 backdrop-blur border border-slate-800 p-4 rounded-xl shadow-xl text-white w-80">
         <h1 className="text-lg font-bold bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent flex items-center gap-2">
-          <Compass size={20} className="text-cyan-400" /> Regional Fleet Intel
+          <Compass size={20} className="text-cyan-400" /> Regional Fleet & Traffic
         </h1>
-        <p className="text-xs text-slate-400 mb-4 font-mono">Categorized Route Network</p>
-        <p className="text-[10px] text-cyan-400 mb-4 font-mono">{statusMsg}</p>
+        <p className="text-xs text-slate-400 mb-3 font-mono">TransLink, DriveBC & BC Parks</p>
+        <p className="text-[10px] text-cyan-400 mb-3 font-mono">{statusMsg}</p>
 
-        {/* Live Buses Toggle & Color Legend */}
+        {/* Route Filter Search Box */}
+        <div className="mb-3">
+          <label className="block text-[11px] text-slate-300 mb-1 font-medium flex items-center gap-1">
+            <Filter size={12} /> Filter Route (e.g. 10, R4)
+          </label>
+          <input
+            type="text"
+            placeholder="Type route number..."
+            value={routeFilter}
+            onChange={(e) => setRouteFilter(e.target.value)}
+            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-white text-xs focus:outline-none focus:border-cyan-500"
+          />
+        </div>
+
+        {/* Toggles */}
         <div className="mb-3 space-y-2">
           <button
             onClick={() => setShowBuses(!showBuses)}
@@ -321,20 +492,39 @@ export default function TrafficMap() {
               showBuses ? 'bg-orange-600/30 border-orange-500 text-orange-200' : 'bg-slate-800 border-slate-700 text-slate-400'
             }`}
           >
-            <span className="flex items-center gap-2">
-              <Bus size={16} /> Regional Buses
-            </span>
+            <span className="flex items-center gap-2"><Bus size={16} /> Regional Buses</span>
             <span>{showBuses ? 'ON' : 'OFF'}</span>
           </button>
 
-          {showBuses && (
-            <div className="grid grid-cols-2 gap-1.5 text-[10px] p-2 bg-slate-950/60 rounded-lg border border-slate-800 text-slate-300 font-mono">
-              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-red-500"></span> RapidBus (R)</span>
-              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> North Van (2xx)</span>
-              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-blue-500"></span> Richmond (4xx)</span>
-              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-purple-500"></span> Express (9x/N)</span>
-            </div>
-          )}
+          <button
+            onClick={() => setShowDriveBC(!showDriveBC)}
+            className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs transition-colors ${
+              showDriveBC ? 'bg-red-600/30 border-red-500 text-red-200' : 'bg-slate-800 border-slate-700 text-slate-400'
+            }`}
+          >
+            <span className="flex items-center gap-2"><AlertTriangle size={16} /> DriveBC Highway Alerts</span>
+            <span>{showDriveBC ? 'ON' : 'OFF'}</span>
+          </button>
+
+          <button
+            onClick={() => setShowWebcams(!showWebcams)}
+            className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs transition-colors ${
+              showWebcams ? 'bg-sky-600/30 border-sky-500 text-sky-200' : 'bg-slate-800 border-slate-700 text-slate-400'
+            }`}
+          >
+            <span className="flex items-center gap-2"><Camera size={16} /> BC HighwayCams</span>
+            <span>{showWebcams ? 'ON' : 'OFF'}</span>
+          </button>
+
+          <button
+            onClick={() => setShowParking(!showParking)}
+            className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs transition-colors ${
+              showParking ? 'bg-emerald-600/30 border-emerald-500 text-emerald-200' : 'bg-slate-800 border-slate-700 text-slate-400'
+            }`}
+          >
+            <span className="flex items-center gap-2"><Car size={16} /> BC Parks Parking</span>
+            <span>{showParking ? 'ON' : 'OFF'}</span>
+          </button>
         </div>
 
         {/* Rapid Transit Line Toggles */}

@@ -23,12 +23,21 @@ export async function GET() {
       .filter((e) => e.vehicle && e.vehicle.position)
       .map((e) => {
         const vehicleData = e.vehicle;
-        const routeNo = vehicleData?.trip?.routeId || 'Bus';
-        const vehicleId = vehicleData?.vehicle?.id || e.id || 'Unit';
+        const trip = vehicleData?.trip;
+        
+        // Extract route info safely from trip or vehicle descriptor
+        const rawRoute = trip?.routeId || vehicleData?.vehicle?.label || 'Bus';
+        
+        // Clean up internal TransLink route IDs if they come as long strings
+        let routeNum = String(rawRoute).trim();
+        if (routeNum.includes(':')) {
+          const parts = routeNum.split(':');
+          routeNum = parts[parts.length - 1];
+        }
 
         return {
-          id: vehicleId,
-          routeNumber: String(routeNo).trim(),
+          id: vehicleData?.vehicle?.id || e.id || 'Unit',
+          routeNumber: routeNum || 'Bus',
           lat: vehicleData?.position?.latitude || 0,
           lon: vehicleData?.position?.longitude || 0,
         };
